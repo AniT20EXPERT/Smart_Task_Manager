@@ -67,16 +67,22 @@ export default function AIInteractionSection({ tasks, showNotification, agentAlg
     setChatInput('');
 
     // Call API
-    const [success, data] = await apiCall(API_URL + '/api/validateTask','POST', { user_prompt: chatInput, task_list: agentSchedule});
+    console.log(agentSchedule);
+    const [success, data] = await apiCall(API_URL + '/api/chat','POST', { user_prompt: chatInput, task_list: agentSchedule});
     if (success) {
+      //set agentschedule
+      setAgentSchedule(data.task_list);
+      console.log("success chat response called!")
+      console.log(agentSchedule);
       setChatResponse(data.chat_response);
       // Add AI response
       const aiMessage: ChatMessage = {
         id: Date.now() + 1,
         type: 'ai',
-        message: chatResponse,
+        message: data.chat_response,
         timestamp: new Date()
       };
+      
 
       setTimeout(() => {
         setChatMessages(prev => [...prev, aiMessage]);

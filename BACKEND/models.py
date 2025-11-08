@@ -37,6 +37,11 @@ class SchedulerRequest(BaseModel):
 class RlFeedback(BaseModel):
     choice: str
 
+class TaskItem(BaseModel):
+    task: str
+    start: int
+    end: int
+    date: str
 class Chat_req(BaseModel):
-    task_list: str
+    task_list: List[TaskItem]
     user_prompt: str

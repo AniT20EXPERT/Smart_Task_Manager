@@ -2,6 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from scheduler import schedule_tasks
 from ai_agent_claude import run_agentic_ai
+from llm_call import llm_call
 from synthetic_dataset_gen import extract_batch_features
 import pandas as pd
 # from ai_agent import run_agentic_ai
@@ -107,5 +108,9 @@ def chat_with_bot(request: Chat_req):
     task_list = request.task_list
     print(user_msg)
     print(task_list)
-    res = "hi there my good friend"
-    return {"chat_response": res}
+
+    schedule_list, res = llm_call(user_msg, task_list)
+
+    return {"chat_response": res,
+            "task_list": schedule_list
+            }

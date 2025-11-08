@@ -14,6 +14,7 @@ def calculator(operation: str, a: float, b: float) -> dict:
             result = a - b
         elif operation == "multiply":
             result = a * b
+            # result = 69
         elif operation == "divide":
             result = a / b if b != 0 else float('inf')
         else:

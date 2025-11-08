@@ -229,7 +229,7 @@ Return ONLY a valid JSON array of the MODIFIED NEW TASKS, nothing else:
 
 NOW APPLY THE MODIFICATION TO THE NEW TASKS ONLY. Return only the JSON array:"""
 
-    response = call_ollama(prompt)
+    response = call_groq(prompt)
     print(f"LLM Modification Response:\n{response}\n")
 
     # Try to parse the response
@@ -329,7 +329,7 @@ def rule_based_task_modification(user_instruction: str, tasks: List[Dict]) -> Li
     return tasks
 
 
-def call_ollama(prompt: str, model: str = "mistral:latest") -> str:
+def call_ollama(prompt: str, model: str = "granite3.2:8b") -> str:
     """Call Ollama API with given prompt."""
     try:
         response = requests.post(
@@ -449,7 +449,7 @@ EXAMPLE OUTPUT:
 
 NOW EXTRACT FROM THE USER INPUT ABOVE. Return only the JSON array:"""
 
-    response = call_ollama(prompt)
+    response = call_groq(prompt)
 
     print(f"LLM Response:\n{response}\n")  # Debug logging
 
@@ -775,7 +775,7 @@ Keep each suggestion to 1-2 sentences. Focus on practical advice.
 
 Your response:"""
 
-    suggestion_msg = call_ollama(prompt).strip()
+    suggestion_msg = call_groq(prompt).strip()
 
     # Ensure proper formatting
     if not suggestion_msg.startswith("💡"):
@@ -830,3 +830,371 @@ def handle_user_response(
         return "❌ Suggestion rejected. Please provide more details.", task_summary
     else:
         return f"💡 Updated Suggestion: I understand you want to modify. {user_response[:100]}", task_summary
+
+
+import requests
+import json
+import re
+from datetime import datetime, timedelta
+from typing import List, Dict, Tuple, Optional
+import os
+from dotenv import load_dotenv
+load_dotenv()
+# Add Groq API configuration at the top of the file
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")  # Set this environment variable
+GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
+GROQ_MODEL = "qwen/qwen3-32b"  # Groq's Qwen model
+
+
+def call_groq(prompt: str, model: str = GROQ_MODEL, temperature: float = 0.1, max_tokens: int = 1500) -> str:
+    """Call Groq API with given prompt."""
+    if not GROQ_API_KEY:
+        return "Error: GROQ_API_KEY environment variable not set"
+
+    try:
+        headers = {
+            "Authorization": f"Bearer {GROQ_API_KEY}",
+            "Content-Type": "application/json"
+        }
+
+        payload = {
+            "model": model,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": prompt
+                }
+            ],
+            "temperature": temperature,
+            "max_tokens": max_tokens
+        }
+
+        response = requests.post(
+            GROQ_API_URL,
+            headers=headers,
+            json=payload,
+            timeout=90
+        )
+
+        if response.status_code == 200:
+            result = response.json()
+            return result.get("choices", [{}])[0].get("message", {}).get("content", "")
+        else:
+            error_msg = f"Groq API error: {response.status_code}"
+            try:
+                error_detail = response.json()
+                error_msg += f" - {error_detail}"
+            except:
+                error_msg += f" - {response.text}"
+            return error_msg
+
+    except requests.exceptions.Timeout:
+        return "Error: Groq API request timed out"
+    except Exception as e:
+        return f"Error calling Groq API: {str(e)}"
+
+
+# Replace all call_ollama() calls with call_groq()
+# Update the function signatures:
+
+def extract_task_info_with_llm(nl_entry: str) -> List[Dict]:
+    """
+    Extract structured task information from natural language using LLM reasoning.
+    Uses chain-of-thought prompting for better comprehension.
+    """
+
+    current_date = datetime.now().strftime("%Y-%m-%d")
+    current_time = datetime.now().strftime("%H:%M")
+    day_of_week = datetime.now().strftime("%A")
+    current_year = datetime.now().year
+
+    prompt = f"""You are an expert task extraction system. Extract ALL tasks from the user's natural language input.
+
+CURRENT CONTEXT:
+- Date: {current_date} ({day_of_week})
+- Time: {current_time}
+- Year: {current_year}
+
+USER INPUT:
+"{nl_entry}"
+
+STEP 1 - IDENTIFY TASKS:
+First, identify how many separate tasks are mentioned. Tasks are usually separated by commas, "and", or semicolons.
+
+STEP 2 - EXTRACT INFORMATION FOR EACH TASK:
+For each task, extract:
+- Task name (the action to be done)
+- Duration (how long it takes - look for "Xhr", "X hours", "Xhrs")
+- Start time (when to begin - look for times like "6am", "6:00", "18:00")
+- Start date (what day to start - look for dates like "2/10/2025", "tomorrow", "today")
+- Deadline time (when it must be completed - look for "by", "before", "complete by")
+- Deadline date (deadline day - may reference "same day" as another date)
+- Importance (High/Medium/Low based on urgency words)
+
+STEP 3 - REASONING RULES:
+- "same day" means use the previously mentioned date
+- "anytime" for start time means null (flexible start)
+- "before Xam" means deadline time is X in 24h format
+- "6am" = 6, "6pm" = 18 in 24-hour format
+- Dates like "2/10/2025" - use DAY/MONTH/YEAR format (2 is day, 10 is month)
+- Convert to YYYY-MM-DD format (2/10/2025 = 2025-10-02)
+- If deadline is on same day as start, use same date
+- If time not specified but implied from context, infer it
+
+STEP 4 - OUTPUT FORMAT:
+Return ONLY a valid JSON array, nothing else:
+
+[
+  {{
+    "TaskName": "task description",
+    "Duration": hours_as_integer_or_null,
+    "arrivaltime": hour_0_to_23_or_null,
+    "arrivaldate": "YYYY-MM-DD_or_null",
+    "deadlinetime": hour_0_to_23_or_null,
+    "deadlinedate": "YYYY-MM-DD_or_null",
+    "importance": "High_or_Medium_or_Low"
+  }}
+]
+
+NOW EXTRACT FROM THE USER INPUT ABOVE. Return only the JSON array:"""
+
+    response = call_groq(prompt)  # Changed from call_ollama
+
+    print(f"Groq Response:\n{response}\n")  # Updated debug message
+
+    # Rest of the function remains the same
+    extracted_tasks = None
+
+    # Strategy 1: Direct JSON parsing
+    try:
+        extracted_tasks = json.loads(response.strip())
+        if isinstance(extracted_tasks, list) and len(extracted_tasks) > 0:
+            return validate_and_clean_tasks(extracted_tasks)
+    except:
+        pass
+
+    # Strategy 2: Find JSON array in response
+    try:
+        cleaned = response.strip()
+        cleaned = re.sub(r'^```(?:json)?\s*', '', cleaned, flags=re.MULTILINE)
+        cleaned = re.sub(r'\s*```$', '', cleaned, flags=re.MULTILINE)
+
+        json_match = re.search(r'\[\s*\{.*?\}\s*(?:,\s*\{.*?\}\s*)*\]', cleaned, re.DOTALL)
+        if json_match:
+            extracted_tasks = json.loads(json_match.group())
+            if isinstance(extracted_tasks, list) and len(extracted_tasks) > 0:
+                return validate_and_clean_tasks(extracted_tasks)
+    except Exception as e:
+        print(f"Strategy 2 failed: {e}")
+
+    # Strategy 3: Try to fix common JSON issues
+    try:
+        cleaned = response.strip()
+        cleaned = re.sub(r',(\s*[}\]])', r'\1', cleaned)
+        cleaned = re.sub(r'(\w+):', r'"\1":', cleaned)
+
+        json_match = re.search(r'\[.*\]', cleaned, re.DOTALL)
+        if json_match:
+            extracted_tasks = json.loads(json_match.group())
+            if isinstance(extracted_tasks, list) and len(extracted_tasks) > 0:
+                return validate_and_clean_tasks(extracted_tasks)
+    except Exception as e:
+        print(f"Strategy 3 failed: {e}")
+
+    print("All LLM strategies failed, using regex fallback")
+    return regex_based_fallback(nl_entry)
+
+
+def apply_modifications_with_llm(
+        user_instruction: str,
+        original_suggestion: str,
+        current_tasks: List[Dict],
+        num_existing_tasks: int = 0
+) -> List[Dict]:
+    """
+    Use LLM reasoning to intelligently modify tasks based on user instructions.
+    Only modifies newly added tasks, preserves all existing tasks.
+    """
+
+    current_date = datetime.now().strftime("%Y-%m-%d")
+
+    existing_tasks = current_tasks[:num_existing_tasks]
+    new_tasks = current_tasks[num_existing_tasks:]
+
+    print(f"Protecting {len(existing_tasks)} existing tasks, modifying {len(new_tasks)} new tasks")
+
+    prompt = f"""You are a task modification expert. The user wants to modify their task list based on their instructions.
+
+IMPORTANT: Only modify the NEW TASKS below. Do NOT modify or remove any existing tasks.
+
+NEW TASKS (can be modified):
+{json.dumps(new_tasks, indent=2)}
+
+NUMBER OF EXISTING TASKS (must be preserved): {len(existing_tasks)}
+
+PREVIOUS SUGGESTION FROM SYSTEM:
+{original_suggestion}
+
+USER'S MODIFICATION INSTRUCTION:
+"{user_instruction}"
+
+YOUR TASK:
+Analyze the user's instruction and modify ONLY the new tasks accordingly. Common modifications include:
+1. Breaking a task into subtasks (e.g., "break report into draft and review")
+2. Adjusting durations (e.g., "make each subtask 2 hours")
+3. Changing priorities
+4. Adjusting times/dates
+
+CRITICAL RULES:
+- ONLY modify the new tasks shown above
+- Do NOT remove or modify any existing tasks
+- If breaking a task into subtasks, REMOVE the original task from new tasks and ADD the new subtasks
+- Preserve all original task attributes (dates, times, importance) unless user specifies changes
+- When splitting duration, ensure subtasks add up to original duration (or use user-specified durations)
+- If user says "break X into Y and Z of Nhrs each", create Y and Z tasks with Duration=N
+- Keep same arrivaldate/deadlinedate for subtasks unless specified otherwise
+- For subtasks, use null for arrivaltime if not specified, but preserve deadlinedate/deadlinetime
+- If original task had "write report", subtasks should be "draft report", "review report", etc.
+
+OUTPUT FORMAT:
+Return ONLY a valid JSON array of the MODIFIED NEW TASKS, nothing else:
+
+[
+  {{
+    "TaskName": "task name",
+    "Duration": hours_or_null,
+    "arrivaltime": hour_0_to_23_or_null,
+    "arrivaldate": "YYYY-MM-DD_or_null",
+    "deadlinetime": hour_0_to_23_or_null,
+    "deadlinedate": "YYYY-MM-DD_or_null",
+    "importance": "High_or_Medium_or_Low"
+  }}
+]
+
+NOW APPLY THE MODIFICATION TO THE NEW TASKS ONLY. Return only the JSON array:"""
+
+    response = call_groq(prompt)  # Changed from call_ollama
+    print(f"Groq Modification Response:\n{response}\n")
+
+    # Rest of the function remains the same
+    try:
+        modified_new_tasks = json.loads(response.strip())
+        if isinstance(modified_new_tasks, list) and len(modified_new_tasks) > 0:
+            validated_new_tasks = validate_and_clean_tasks(modified_new_tasks)
+            return existing_tasks + validated_new_tasks
+    except:
+        pass
+
+    try:
+        cleaned = response.strip()
+        cleaned = re.sub(r'^```(?:json)?\s*', '', cleaned, flags=re.MULTILINE)
+        cleaned = re.sub(r'\s*```$', '', cleaned, flags=re.MULTILINE)
+
+        json_match = re.search(r'\[\s*\{.*?\}\s*(?:,\s*\{.*?\}\s*)*\]', cleaned, re.DOTALL)
+        if json_match:
+            modified_new_tasks = json.loads(json_match.group())
+            if isinstance(modified_new_tasks, list) and len(modified_new_tasks) > 0:
+                validated_new_tasks = validate_and_clean_tasks(modified_new_tasks)
+                return existing_tasks + validated_new_tasks
+    except Exception as e:
+        print(f"Modification parsing failed: {e}")
+
+    print("LLM modification failed, attempting rule-based fallback")
+    modified_new_tasks = rule_based_task_modification(user_instruction, new_tasks)
+    return existing_tasks + modified_new_tasks
+
+
+def run_planner(extracted_tasks: List[Dict], nl_entry: str, current_tasks: List[Dict]) -> str:
+    """
+    Planner Agent: Uses LLM to provide intelligent scheduling suggestions.
+    """
+
+    task_details = []
+    for task in extracted_tasks:
+        details = {
+            "name": task.get("TaskName"),
+            "duration": f"{task.get('Duration')}hrs" if task.get("Duration") else "unknown",
+            "starts": f"{task.get('arrivaldate')} at {task.get('arrivaltime')}:00" if task.get(
+                'arrivaldate') and task.get('arrivaltime') is not None else "flexible start",
+            "deadline": f"{task.get('deadlinedate')} by {task.get('deadlinetime')}:00" if task.get(
+                'deadlinedate') and task.get('deadlinetime') is not None else "no deadline",
+            "importance": task.get("importance", "Medium")
+        }
+        task_details.append(details)
+
+    current_date = datetime.now().strftime("%Y-%m-%d %A")
+    current_time = datetime.now().strftime("%H:%M")
+
+    prompt = f"""You are an intelligent scheduling assistant analyzing tasks to provide strategic recommendations.
+
+CURRENT DATE/TIME: {current_date} at {current_time}
+
+NEW TASKS TO SCHEDULE:
+{json.dumps(task_details, indent=2)}
+
+EXISTING TASKS: {len(current_tasks)} tasks already in schedule
+
+YOUR ANALYSIS GOALS:
+1. Identify if any task is complex and should be broken into subtasks
+   Example: "write report" → research (1hr), outline (0.5hr), draft (2hrs), review (0.5hr)
+
+2. Check for scheduling conflicts or tight deadlines
+   - Is there enough time between start and deadline?
+   - Are multiple tasks competing for the same time slot?
+
+3. Suggest optimizations
+   - Should tasks be reordered for better flow?
+   - Can similar tasks be grouped?
+   - Are there productivity tips (e.g., do difficult tasks when fresh)?
+
+4. Consider task dependencies
+   - Does one task need to be done before another?
+
+RESPONSE FORMAT:
+Provide 2-4 specific, actionable suggestions. Be concrete and helpful.
+
+Start with "💡 Suggestions:" then use bullet points:
+• Suggestion 1
+• Suggestion 2
+• etc.
+
+Keep each suggestion to 1-2 sentences. Focus on practical advice.
+
+Your response:"""
+
+    suggestion_msg = call_groq(prompt).strip()  # Changed from call_ollama
+
+    # Rest of the function remains the same
+    if not suggestion_msg.startswith("💡"):
+        suggestion_msg = f"💡 Suggestions:\n{suggestion_msg}"
+
+    if len(suggestion_msg) < 50 or "successfully" in suggestion_msg.lower():
+        suggestions = ["💡 Suggestions:"]
+
+        for task in extracted_tasks:
+            if task.get("Duration") and task.get("arrivaltime") is not None and task.get("deadlinetime") is not None:
+                available_time = task.get("deadlinetime") - task.get("arrivaltime")
+                if available_time < task.get("Duration"):
+                    suggestions.append(
+                        f"• ⚠️ '{task.get('TaskName')}' has {available_time}hrs available but needs {task.get('Duration')}hrs - consider adjusting times")
+
+        for task in extracted_tasks:
+            if task.get("Duration") and task.get("Duration") >= 3:
+                suggestions.append(
+                    f"• 📋 Consider breaking '{task.get('TaskName')}' ({task.get('Duration')}hrs) into smaller subtasks for better progress tracking")
+
+        high_priority_tasks = [t for t in extracted_tasks if t.get("importance") == "High"]
+        if high_priority_tasks:
+            suggestions.append(
+                f"• 🎯 You have {len(high_priority_tasks)} high-priority task(s) - consider scheduling these during your peak productivity hours")
+
+        if len(suggestions) == 1:
+            suggestions.append(f"• ✅ All {len(extracted_tasks)} task(s) look schedulable with current timeframes")
+            suggestions.append(f"• 💪 Total workload: {sum(t.get('Duration', 0) for t in extracted_tasks)}hrs")
+
+        suggestion_msg = "\n".join(suggestions)
+
+    return suggestion_msg
+
+# Remove the old call_ollama function entirely and keep only call_groq
+# All other functions remain the same
